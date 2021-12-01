@@ -1,0 +1,82 @@
+================================================
+1) Have 1.txt file in edge Node --- /home/cloudera/data/
+mkdir /home/cloudera/data/
+cd /home/cloudera/data
+Using Winscp
+
+================================================
+2) Go to mysql create an RDBMS table as 
+
+mysql -uroot -pcloudera
+create database projc;
+use projc;
+
+create table customer_src(id int(10),username varchar(100),sub_port varchar(100),host varchar(100),date_time varchar(100),hit_count_val_1 varchar(100),
+hit_count_val_2 varchar(100),hit_count_val_3 varchar(100),timezone varchar(100),method varchar(100),`procedure` varchar(100),value varchar(100),sub_product varchar(100),web_info varchar(100),status_code varchar(100));
+ 
+
+cloudera
+Load 1.txt to this Table
+load data local infile '/home/cloudera/data/1.txt' into table customer_src fields terminated by ',';
+
+================================================
+3) Create a local directory and go inside it /home/cloudera/pavscdirmkdir 
+mkdir /home/cloudera/pavscdir
+cd /home/cloudera/pavscdir
+
+================================================
+4) Do sqoop import as avro data file for the source table to the target location /user/cloudera/dataavro_stg and check whether data got imported.
+
+sqoop import --connect jdbc:mysql://localhost/projc --username root --password cloudera --table customer_src -m 1 --target-dir /user/cloudera/dataavro_stg --as-avrodatafile;
+
+================================================
+5) check and Copy the avsc file to /user/cloudera/
+ls /home/cloudera/pavscdir      =>>> check whether you have avsc file
+hadoop fs -put /home/cloudera/pavscdir/customer_src.avsc  /user/cloudera/   =>>> to copy into hdfs
+
+================================================
+6) Go to Hive  create database hiveproj1 and use the project
+
+create database hiveproj1;
+use hiveproj1;
+
+================================================
+7)Create Managed table using the avsc on staging location   ---- HIVE
+================================================
+
+create  table customer_managed_tab  ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.avro.AvroSerDe' STORED AS AVRO LOCATION '/user/cloudera/dataavro_stg'  
+TBLPROPERTIES ('avro.schema.url'='/user/cloudera/customer_src.avsc');
+
+================================================
+8)Create external table using AVRO with partitions year month and day   ---- HIVE
+================================================
+
+create external table customer_target_analytics partitioned by (current_day string,year string,month string,day string) ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.avro.AvroSerDe'
+STORED AS AVRO LOCATION '/user/cloudera/customer_target_analytics'  TBLPROPERTIES ('avro.schema.url'='/user/cloudera/customer_src.avsc');
+
+================================================
+9)Insert into external table  with Partition date column source date_time ---- with filter web_info='JAKARTA'    ---- HIVE
+================================================
+
+SET hive.exec.dynamic.partition=true; 
+SET hive.exec.dynamic.partition.mode=no strict; 
+SET hive.exec.max.dynamic.partitions.pernode=10000; 
+SET hive.exec.max.dynamic.partitions=10000; 
+
+insert into customer_target_analytics partition(current_day,year,month,day) select id,username,sub_port,host,from_unixtime(unix_timestamp(date_time,'dd/MMM/yyyy:HH:mm:ss Z'),'yyyyMM,dd'),
+hit_count_val_1,hit_count_val_2,hit_count_val_3,timezone,method,procedure,value,sub_product,web_info,status_code,current_date,
+year(from_unixtime(unix_timestamp(date_time,'dd/MMM/yyyy:HH:mm:ss Z'),'yyyy-MM-dd'))  
+as year,month(from_unixtime(unix_timestamp(date_time,'dd/MMM/yyyy:HH:mm:ss Z'),'yyyy-MM-dd')) as month,
+day(from_unixtime(unix_timestamp(date_time,'dd/MMM/yyyy:HH:mm:ss Z'),'yyyy-MM-dd')) as day from customer_managed_tab  where not(upper(web_info) like'%JAKARTA%');
+
+
+
+
+Check the target location in Hue to HDFS  -- Edge Node
+
+hadoop fs -ls /user/cloudera/customer_target_analytics
+
+================================================
+10) Drop Managed table    ---- HIVE
+================================================
+drop table customer_managed_tab;
